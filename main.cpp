@@ -120,11 +120,27 @@ std::unordered_map	<vm_id_t		, std::set<row_num_t>>	replica_map;
 // Next File Version
 std::unordered_map<std::string	, int>					next_version_map;
 
+
+struct file_struct{
+    string file_name;       //If in delivered_map. file_name = file name; If in buffer_file_id_map: file_name = file name + version
+    int version;
+}
+
+
+mutex delivered_file_map_lock;
+map<string, file_struct> delivered_file_map;
+
+mutex buffer_file_map_lock;
+map<string, file_struct> buffer_file_map;       //key = "file_name" + "version"
+
+
+
 mutex waiting_to_handle_fail_id_lock;
 int waiting_to_handle_fail_id = -1;
 int last_failed_node = -1;
 
 mutex file_table_lock;
+mutex next_version_map_lock;
 
 
 
@@ -440,14 +456,14 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
     
     membership_list_lock.lock();
     if(membership_list[cur_master1_id] != membership_list.end()){
-        master1_info = membership_list[cur_master1_id];
+        master1_info = vm_info_map[cur_master1_id];
     }
     else{
         master1_info.vm_num = -1;       //To mark that master 1 failed
     }
     
     if(membership_list[cur_master2_id] != membership_list.end()){
-        master2_info = membership_list[cur_master2_id];
+        master2_info = vm_info_map[cur_master2_id];
     }
     else{
         master2_info.vm_num = -1;       //To mark that master 1 failed
@@ -466,7 +482,7 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
         }
         
         if(new_master2_id != -1){
-            new_master2_info = membership_list[new_master2_id];
+            new_master2_info = vm_info_map[new_master2_id];
         }
         else{
             cout << "There is less than 3 VMs in the system!!! This should never happen!!\n";
@@ -552,12 +568,12 @@ void node_fail_handler_at_master1(vm_id_t node){
                 int new_master2_id = -1;
                 membership_list_lock.lock();
                 for(auto it = membership_list.begin(), it != membership_list.end(); it++){
-                    if(it->first != my_vm_info.vm_num && it->first != node && it->first != last_failed_node){
+                    if(*it != my_vm_info.vm_num && *it != node && *it != last_failed_node){
                         if(new_master1_id == -1){
-                            new_master1_id = it->first;
+                            new_master1_id = *it;
                         }
                         else if(new_master2_id == -1){
-                            new_master2_id = it->first;
+                            new_master2_id = *it;
                         }
                         else{
                             break;
@@ -583,9 +599,9 @@ void node_fail_handler_at_master1(vm_id_t node){
                 int new_master2_id = -1;
                 membership_list_lock.lock();
                 for(auto it = membership_list.begin(), it != membership_list.end(); it++){
-                    if(it->first != my_vm_info.vm_num && it->first != node && it->first != master2_id){
+                    if(*it != my_vm_info.vm_num && *it != node && *it != master2_id){
                         if(new_master2_id == -1){
-                            new_master2_id = it->first;
+                            new_master2_id = *it;
                             break;
                         }
                     }
@@ -610,9 +626,9 @@ void node_fail_handler_at_master1(vm_id_t node){
             int new_master2_id = -1;
             membership_list_lock.lock();
             for(auto it = membership_list.begin(), it != membership_list.end(); it++){
-                if(it->first != my_vm_info.vm_num && it->first != node && it->first != master2_id){
+                if(*it != my_vm_info.vm_num && *it != node && *it != master2_id){
                     if(new_master2_id == -1){
-                        new_master2_id = it->first;
+                        new_master2_id = *it;
                         break;
                     }
                 }
@@ -639,8 +655,8 @@ void node_fail_handler_at_master1(vm_id_t node){
         vector<string> ip_strings;
         membership_list_lock.lock();
         for(auto it = membership_list.begin(); it != membership_list.end(); it++){
-            if(it->first != my_vm_info.vm_num)
-                ip_strings.push_back(it->second.ip_addr_str);
+            if(*it != my_vm_info.vm_num)
+                ip_strings.push_back(vm_info_map[*it].ip_addr_str);
         }
         membership_list_lock.unlock();
         
@@ -668,12 +684,12 @@ void node_fail_handler_at_master2(vm_id_t node){
         int new_master2_id = -1;
         membership_list_lock.lock();
         for(auto it = membership_list.begin(), it != membership_list.end(); it++){
-            if(it->first != my_vm_info.vm_num && it->first != node && it->first != last_failed_node){
+            if(*it != my_vm_info.vm_num && *it != node && *it != last_failed_node){
                 if(new_master1_id == -1){
-                    new_master1_id = it->first;
+                    new_master1_id = *it;
                 }
                 else if(new_master2_id == -1){
-                    new_master2_id = it->first;
+                    new_master2_id = *it;
                 }
                 else{
                     break;
@@ -704,8 +720,8 @@ void node_fail_handler_at_master2(vm_id_t node){
         vector<string> ip_strings;
         membership_list_lock.lock();
         for(auto it = membership_list.begin(); it != membership_list.end(); it++){
-            if(it->first != my_vm_info.vm_num)
-                ip_strings.push_back(it->second.ip_addr_str);
+            if(*it != my_vm_info.vm_num)
+                ip_strings.push_back(vm_info_map[*it].ip_addr_str);
         }
         membership_list_lock.unlock();
         
