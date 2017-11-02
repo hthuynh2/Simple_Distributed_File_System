@@ -115,6 +115,8 @@ string Protocol::create_Q_msg(){
     return msg;
 }
 
+
+
 /* This function handle H_msg and update HB of HB targets
  *input:    msg: H_msg
  *output:   NONE
@@ -542,10 +544,479 @@ string create_FTR_msg(string file_name, int version, int M_x){
     return msg;
 }
 
+string create_MU_msg(int failed_node, int master1_id, int master2_id){
+    string msg("MU");
+    msg += int_to_string(failed_node);
+    msg += int_to_string(master1_id);
+    msg += int_to_string(master2_id);
+    msg += "\n";
+    for(auto it = file_table.begin(); it != file_table.end(); it++){
+        string file_str(it->second.file_name);
+        file_str.push_back('?');
+        file_str += int_to_string(it->second.replica);
+        file_str += int_to_string(it->second.version);
+        file_str += int_to_string(next_version_map[it->second.file_name]);
+        msg += file_str;
+    }
+    
+    return msg;
+}
+
+
+
+string create_M_msg(int master_id){
+    string msg("M");
+    msg += int_to_string(master_id);
+    return msg;
+}
 
 
 
 
+
+
+
+void handle_FTR_msg(string msg){
+    char* pch = strchr(msg.c_str(), '\n');
+    int file_name_length = pch - msg.c_str() - 4;
+    string file_name = msg.substr(3, file_name_length);
+    int version = string_to_int(msg.substr(pch-msg.c_str()+1, 2));
+    int M_x = string_to_int(msg.substr(pch-msg.c_str()+1 +2, 2));
+    
+    membership_list_lock.lock();
+    if(membership_list.find(M_x) != membership_list.end()){
+        VM_info M_x_info = membership_list[M_x];
+        membership_list_lock.unlock();
+    }
+    else{
+        membership_list_lock.unlock();
+        return;
+    }
+    
+    //NEED to implement so that only send if M_x need this file
+    send_file(M_x.ip_addr_str, file_name, version);
+    return;
+}
+
+void handle_MU_msg(string msg){
+    file_table_lock.lock();
+    vector<string> lines;
+    
+    string delimiter = "\n";
+    size_t pos = 0;
+    std::string token;
+    while ((pos = msg.find(delimiter)) != std::string::npos) {
+        token = msg.substr(0, pos);
+        token.push_back('\n');
+        lines.push_back(token);
+        msg.erase(0, pos + delimiter.length());
+    }
+    
+    int new_master, new_master1 , new_master2, node_fail_id;
+    node_fail_id = string_to_int(lines[0].substr(2, 2));
+    new_master = string_to_int(lines[0].substr(4,2));
+    new_master1 = string_to_int(lines[0].substr(6, 2));
+    new_master2 = string_to_int(lines[0].substr(8, 2));
+    
+    master_lock.lock();
+
+    master = new_master;
+    master_lock.unlock();
+
+    master1_id = new_master1;
+    master2_id = new_master2;
+
+    
+    //Need lock ??
+    file_table.erase(file_table.begin(), file_table.end());
+    next_version_map.erase(next_version_map.begin(), next_version_map.end());
+    replica_map.erase(replica_map.begin(), replica_map.end());
+    filename_map.erase(filename_map.begin(), filename_map.end());
+    
+    for(int i = 1; i < lines.size(); i++){
+        char* pch = strchr(lines[i].c_str(), '?');
+        int file_name_length = pch - msg.c_str();
+        string file_name = msg.substr(0, file_name_length);
+        int replica_id = string_to_int(msg.substr(file_name_length+1, 2));
+        int version = string_to_int(msg.substr(file_name_length+1+2, 2));
+        int next_version = string_to_int(msg.substr(file_name_length+1+2+2, 2));
+        
+        file_row new_row;
+        new_row.row = i;
+        new_row.file_name = file_name;
+        new_row.version = version;
+        new_row.replica = replica_id;
+        
+        file_table[i] = file_row;
+        next_version_map[file_name] = next_version;
+        replica_map[replica_id] = i;
+        filename_map[file_name] = i;
+    }
+    
+    file_table_lock.unlock();
+    return;
+}
+
+//Do I need lock for the master????
+void handle_M_msg(string msg){
+    master_lock.lock();
+    int new_master = string_to_int(msg.substr(1,2));
+    master = new_master;
+    master_lock.unlock();
+
+}
+
+
+string create_WR_msg(string file_name){
+    string msg("WR");
+    msg += file_name;
+    return msg;
+}
+
+
+string create_WT_msg(int rep1, int rep2, int rep3, int version){
+    string msg("WT");
+    msg += int_to_string(rep1);
+    msg += int_to_string(rep2);
+    msg += int_to_string(rep3);
+    msg += int_to_string(version);
+    return msg;
+}
+
+
+string reate_WA_msg(int rep1,int  rep2,int rep3, int version, string file_name){
+    string msg("WA");
+    msg += int_to_string(rep1);
+    msg += int_to_string(rep2);
+    msg += int_to_string(rep3);
+    msg += int_to_string(version);
+    msg += file_name;
+    return msg;
+}
+
+
+
+bool write_at_client(string file_name){
+    
+    master_lock.lock();
+    int cur_master_id = master_id;
+    master_lock.unlock();
+    
+    membership_list_lock();
+    if(membership_list.find(cur_master_id) == membership_list.end()){
+        membership_list_lock.unlock();
+        return false;
+    }
+    VM_info master_info =  membership_list[cur_master_id];
+    membership_list_lock.unlock();
+    
+    //Send write request msg to S
+    int master_sock_fd = tcp_open_connection(master_info.ip_addr_str, PORT_WRITE_MSG);
+    if(master_sock_fd == -1)
+        return false;
+    
+    //Create Write Request msg
+    string msg = create_WR_msg(file_name);
+    
+    int numbytes = tcp_send_string(master_sock_fd, msg);
+    if(numbytes != 0)
+        return false;
+    
+    struct timeval timeout_tv;
+    timeout_tv.tv_sec = WRITE_RQ_TIMEOUT;      //in sec
+    timeout_tv.tv_usec = 0;
+    setsockopt(master_sock_fd, SOL_SOCKET, SO_RCVTIMEO,(struct timeval *)&timeout_tv,sizeof(struct timeval));
+
+    char buf[MAX_BUF_LEN];
+    numbytes = recv(master_sock_fd, buf, MAX_BUF_LEN,0);
+    if(numbytes <= 0){      //Time out
+        close(master_sock_fd);
+        return false;
+    }
+    close(master_sock_fd);
+    string wt_msg(buf, numbytes);
+    if(wt_msg.size() != 10){
+        cout << "WT msg does not have size of 10. Something is WRONG!!\n";
+        return false;
+    }
+    
+    int rep1 = string_to_int(wt_msg.substr(2,2));
+    int rep2 = string_to_int(wt_msg.substr(4,2));
+    int rep3 = string_to_int(wt_msg.substr(6,2));
+    int version = string_to_int(wt_msg.substr(8,2));
+    
+    VM_info rep1_info, rep2_info, rep3_info;
+    
+    membership_list_lock.lock();
+    if(membership_list.find(rep1) == membership_list.find(rep1)){
+        cout << "Cannot find replica in membership list. Something is wrong\n";
+        return false;
+    }
+    else{
+        rep1_info = membership_list[rep1];
+    }
+    if(membership_list.find(rep2) == membership_list.find(rep2)){
+        cout << "Cannot find replica in membership list. Something is wrong\n";
+        return false;
+    }
+    else{
+        rep1_info = membership_list[rep2];
+    }
+    
+    if(membership_list.find(rep1) == membership_list.find(rep3)){
+        cout << "Cannot find replica in membership list. Something is wrong\n";
+        return false;
+    }
+    else{
+        rep1_info = membership_list[rep3];
+    }
+    membership_list_lock.unlock();
+    
+    // Can do these in parallel to make it faster!!! Use 3 threads to do it
+    bool result = true;
+    bool flag = false;
+    //NEED to check if replica is current vm
+    if(rep1_info.vm_num != my_vm_info.vm_num){
+        result &&= check_and_write_file(file_name, rep1_info.ip_addr_str, WRITE_FILE_PORT, version);
+    }
+    else{
+        flag = true;
+    }
+    if(rep1_info.vm_num != my_vm_info.vm_num){
+        result &&= check_and_write_file(file_name, rep2_info.ip_addr_str, WRITE_FILE_PORT, version);
+    }
+    else{
+        flag = true;
+    }
+    if(rep1_info.vm_num != my_vm_info.vm_num){
+        result &&= check_and_write_file(file_name, rep3_info.ip_addr_str, WRITE_FILE_PORT, version);
+    }
+    else{
+        flag = true;
+    }
+    
+    if(result == false){
+        return false;
+    }
+    
+    //NOTE: This send to old master. If the master fail during the write, then this is unsuccessful write
+    //Can Change this by getting current master instead of using old master --> This is more complex.
+    
+    //Send msg to server say that finish writing
+    master_sock_fd = tcp_open_connection(master_info.ip_addr_str, PORT_WRITE_MSG);
+    if(master_sock_fd == -1){
+        return false;
+    }
+    
+    //Create Write Ack msg
+    string wr_msg = create_WA_msg( rep1,  rep2, rep3, version, file_name);
+    if(tcp_send_string(master_sock_fd, wr_msg) == -1){
+        return false;
+    }
+    
+    timeout_tv.tv_sec = WRITE_RQ_TIMEOUT;      //in sec
+    timeout_tv.tv_usec = 0;
+    setsockopt(master_sock_fd, SOL_SOCKET, SO_RCVTIMEO,(struct timeval *)&timeout_tv,sizeof(struct timeval));
+    
+    numbytes = recv(master_sock_fd, buf, MAX_BUF_LEN,0);
+    if(numbytes <= 2){      //Time out
+        close(master_sock_fd);
+        return false;
+    }
+    
+    if(buf[2] != '1'){
+        close(master_sock_fd);
+        if(flag == true){
+            //NEED TO DO:
+            //Add file to local file list && move file into buffer folder
+        }
+        return false;
+    }
+    else{
+        close(master_sock_fd);
+        return true;
+    }
+}
+
+
+string create_FC_msg(string file_name, int version){
+    string msg("FC");
+    msg += file_name;
+    msg += "?";
+    msg += version;
+    return msg;
+}
+
+string create_FTR_msg(bool is_accept){
+    string msg("FCR");
+    if(is_accept)
+        msg += "1";
+    else
+        msg += "0";
+    return msg;
+}
+
+bool check_and_write_file(string file_name, string dest_ip, int dest_port, int version){
+    FILE* fp = fopen(path, "r");
+
+    if(fp == NULL){
+        cout<< "Cannot open file\n";
+        return true;                //Should I return true or false??
+    }
+    
+    int socket_fd = tcp_open_connection(dest_ip, dest_port);
+    if(socket_fd == -1)
+        return false;
+    
+    string fc_msg = create_FC_msg(file_name, version);
+    int numbytes;
+    if((numbytes = send(socket_fd, fc_msg.c_str(), fc_msg.size())) == -1){
+        printf("Fail to send FC_msg\n");
+        close(socket_fd);
+        return false;
+    }
+    
+    struct timeval timeout_tv;
+    timeout_tv.tv_sec = WRITE_FC_TIMEOUT;      //in sec
+    timeout_tv.tv_usec = 0;
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO,(struct timeval *)&timeout_tv,sizeof(struct timeval));
+
+    
+    char buf[MAX_BUF_LEN];
+    numbytes = recv(socket_fd, buf, MAX_BUF_LEN,0);
+    if(numbytes <= 3){      //Time out
+        close(socket_fd);
+        return false;
+    }
+    
+    char reply = buf[3];
+    if(reply != '1'){
+        close(socket_fd);
+        return true;
+    }
+    
+    timeout_tv.tv_sec = 0;      //in sec
+    timeout_tv.tv_usec = 0;
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO,(struct timeval *)&timeout_tv,sizeof(struct timeval));
+
+    int file_size;
+    fseek(fp, 0L, SEEK_END);
+    file_size = ftell(fp);
+    fseek(fp, 0L, SEEK_SET);
+    
+    string file_size_str = to_string(file_size);
+    
+    //Send size of file
+    if (send(socket_fd, file_size_str, file_size_str.size(), 0) == -1){
+        perror("send");
+        fclose(fp);
+        close(new_fd);
+        return false;
+    }
+    
+    //Read from file and send data
+    int numbytes;
+    while((numbytes = fread(buf, 1, MAX_STR_LEN, fp)) != 0){
+        if (send(socket_fd, buf, numbytes, 0) == -1){
+            perror("send");
+            fclose(fp);
+            close(new_fd);
+            return false;
+        }
+    }
+    fclose(fp);
+    close(socket_fd);
+}
+
+
+void handle_WR_msg(int socket_fd, string msg){
+    string file_name = msg.substr(2);
+    int rep1 = -1, rep2 = -1, rep3 = -1;
+    int version ;
+    file_table_lock.lock();
+    if(filename_map.find(file_name) == filename_map.end()){//file does not exist
+        set<int> reps = route_file(file_name);
+        for(auto it = reps.begin(); it != reps.end(); it ++){
+            if(rep1 == -1){
+                rep1 = *it;
+            }
+            else if(rep2 == -1){
+                rep2 = *it;
+            }
+            else if(rep3 == -1){
+                rep3 = *it;
+            }
+            else
+                break;
+        }
+        if(next_version_map[file_name] == next_version_map.end()){
+            version = 1;
+            next_version_map[file_name] = 2;
+        }
+        else{
+            version = next_version_map[file_name];
+            next_version_map[file_name]++;
+        }
+    }
+    else{
+        set<int> rows = filename_map[file_name];
+        if(rows.size() != 3){    //Something is wrong!!
+            cout << "File has less than 3 replica. Something is WRONG\n";
+        }
+        for(auto it = rows.begin(); it != rows.end(); it++){
+            if(rep1 == -1){
+                rep1 = file_table[*it].replica;
+            }
+            else if(rep2 == -1){
+                rep2 = file_table[*it].replica;
+            }
+            else if(rep3 == -1){
+                rep3 = file_table[*it].replica;
+            }
+            else
+                break;
+        }
+        version = next_version_map[file_name];
+        next_version_map[file_name] ++;
+    }
+    
+    file_table_lock.unlock();
+    
+    string wt_msg = create_WT_msg(rep1, rep2, rep3, version);
+    send(socket_fd, wt_msg);
+    //Callee function will close the socket_fd;
+}
+
+
+void handle_WA_msg(int socket_fd, string msg){
+    int rep1 = int_to_string(msg.substr(2,2));
+    int rep2 = int_to_string(msg.substr(4,2));
+    int rep3 = int_to_string(msg.substr(6,2));
+    int version = int_to_string(msg.substr(8,2));
+    string file_name = msg.substr(10);
+    
+    file_table_lock.lock();
+    
+    if(filename_map.find(file_name) == filename_map.end()){
+        
+    }
+    else{
+        
+    }
+    
+    set<int> = route_file(file_name);
+    
+    
+    
+    file_table_lock.unlock();
+    
+    //Send msg to S1 S2 before reply client!!!!
+}
+
+replicas_t route_file(std::string filename) {
+
+    
+    
 
 
 
