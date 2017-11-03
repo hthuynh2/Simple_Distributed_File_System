@@ -609,7 +609,6 @@ void handle_MU_msg(string msg){
     new_master2 = string_to_int(lines[0].substr(8, 2));
     
     master_lock.lock();
-    
     master = new_master;
     master_lock.unlock();
     

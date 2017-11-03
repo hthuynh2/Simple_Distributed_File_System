@@ -370,7 +370,6 @@ void get_my_ip(){
         if(i != 3)
             my_vm_info.ip_addr_str.push_back('.');
     }
-    
     return;
 }
 

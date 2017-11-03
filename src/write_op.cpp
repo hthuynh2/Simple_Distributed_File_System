@@ -32,7 +32,7 @@ bool write_at_client(string file_name){
     int cur_master_id = master_id;
     master_lock.unlock();
     
-    membership_list_lock();
+    membership_list_lock.lock();
     if(membership_list.find(cur_master_id) == membership_list.end()){
         membership_list_lock.unlock();
         return false;
