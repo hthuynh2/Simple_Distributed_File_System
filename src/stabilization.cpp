@@ -6,9 +6,9 @@ using vm_id_t = int;
 replicas_t route_file(std::string filename) {
     std::hash<std::string> hash_fn;
     std::size_t first_replica = hash_fn(filename) % NUM_VMS;
-    
+
     replicas_t ret;
-    
+
     for(int i = 0, j = first_replica; i < NUM_REPLICAS; i++) {
         while(1){
             membership_list_lock.lock();
@@ -25,12 +25,11 @@ replicas_t route_file(std::string filename) {
     return ret;
 }
 
-
 void handle_update(std::atomic<int> & count, std::vector<file_update> & updates, std::mutex & updates_mutex, file_update tup) {
     VM_info M_y =  vm_info_map[tup.M_y];
     //Make connection with M_y
     int local_sock = tcp_open_connection(M_y.ip_addr_str, PORT_STABLILIZATION_MSG);
-    
+
     //Create FTR msg and send to M_y
     string msg = create_FTR_msg(tup.filename, tup.version, tup.M_x);
     if(tcp_send_string(local_sock, msg) == -1){     //Cannot send to M_y --> M_y failed
@@ -44,10 +43,10 @@ void handle_update(std::atomic<int> & count, std::vector<file_update> & updates,
                 newest_ver_row = file_table[k].row;
             }
         }
-        
+
         // Get the node which has the file to send
         vm_id_t sender = newest_ver_row.version < tup.version ? newest_ver_row.client : newest_ver_row.replica;
-        
+
         // Schedule update
         updates_mutex.lock();
         updates.emplace_back(tup.filename, sender, tup.M_x, tup.version);
@@ -61,18 +60,18 @@ void handle_update(std::atomic<int> & count, std::vector<file_update> & updates,
             // that is not M_y
             int newest_ver = -1;
             row_num_t newest_ver_row;
-            
+
             for(auto && k : filename_map[tup.filename]) {
                 if(file_table[k].version > newest_ver && file_table[k].replica != tup.M_y) {
                     newest_ver = file_table[k].version;
                     newest_ver_row = file_table[k].row;
                 }
             }
-            
-            
+
+
             // Get the node which has the file to send
             vm_id_t sender = newest_ver_row.version < tup.version ? newest_ver_row.client : newest_ver_row.replica;
-            
+
             // Schedule update
             updates_mutex.lock();
             updates.emplace_back(tup.filename, sender, tup.M_x, tup.version);
@@ -90,7 +89,7 @@ void handle_update(std::atomic<int> & count, std::vector<file_update> & updates,
 void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master1_id, int cur_master2_id){
     std::vector<file_update> updates;
     std::mutex updates_mutex;
-    
+
     // Replicate the keys on the failed node
     // Get all file rows with replica 'node'
     for(auto && i : replica_map[node]) {
@@ -104,36 +103,36 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
                 newest_ver_row = file_table[k].row;
             }
         }
-        
+
         // Get M_y
         vm_id_t M_y = newest_ver_row.replica;
-        
+
         // Get M_x
         vm_id_t M_x;
         replicas_t replicas = route_file(newest_ver_row.filename);      //NOTE: To avoid re-transmit file, M_x be the next alive node after M_y
-        
+
         std::set<row_num_t> file_stores = filename_map[newest_ver_row.filename];
-        
+
         //assert(file_stores.size() == NUM_REPLICAS);
         for(auto && k : file_stores) {
             replicas.erase(file_table[k].replica);
         }
-        
+
         /* Cannot replicate to the client that made the most
          * recent update to the file. If such a client is a
          * replica, 'replicas' will contain the client vm_id. */
         replicas.erase(newest_ver_row.client);
-        
+
         M_x = *replicas.begin();
         updates.emplace_back(newest_ver_row.filename, M_y, M_x, newest_ver);
     }
-    
+
     // Add all updates to file table
     for(auto && i : updates) {
         std::vector<int> intersection_result;
         std::set<row_num_t> & filename_set = filename_map[i.filename];
         std::set<row_num_t> & M_x_set = replicas_map[i.M_x];
-        
+
         std::set_intersection(
                               filename_set.begin(),
                               filename_set.end(),
@@ -142,7 +141,7 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
                               //                std::back_inserter(intersection_result.begin())
                               intersection_result.begin()
                               );
-        
+
         if(intersection_result.empty()) {   //If row is not in the table, add it to the table
             file_table.emplace(
                                file_table.rbegin()->first + 1,
@@ -159,10 +158,10 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
             file_table[intersection_result[0]].version = i.version;
         }
     }
-    
+
     // Atomic variable to count the number of running threads
     std::atomic<int> count = 0;
-    
+
     // If new elements are added to 'updates' run new thread
     while(1){
         updates_mutex.lock();
@@ -200,19 +199,19 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
     //            }
     //            updates_mutex.unlock();
     //        } while(count > 0 || !updates.empty());     //???
-    
+
     // Delete all the rows in the file_table that have 'node' as a replica
     for(auto && i : replicas_map[node]) {
         file_table.erase(i);
     }
-    
+
     // Delete the node from the replicas map
     replicas_map.erase(node);
-    
+
     int new_master2_id = -1;
-    
+
     VM_info master1_info, master2_info, new_master2_info;
-    
+
     membership_list_lock.lock();
     if(membership_list[cur_master1_id] != membership_list.end()){
         master1_info = vm_info_map[cur_master1_id];
@@ -220,7 +219,7 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
     else{
         master1_info.vm_num = -1;       //To mark that master 1 failed
     }
-    
+
     if(membership_list[cur_master2_id] != membership_list.end()){
         master2_info = vm_info_map[cur_master2_id];
     }
@@ -228,8 +227,8 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
         master2_info.vm_num = -1;       //To mark that master 1 failed
     }
     membership_list_lock.unlock();
-    
-    
+
+
     if(node == cur_master1_id || node == cur_master2_id){
         //Choose randomly VM_k to be new master2 if the failed node is any of the 2 old masters
         membership_list_lock.lock();
@@ -239,7 +238,7 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
                 break;
             }
         }
-        
+
         if(new_master2_id != -1){
             new_master2_info = vm_info_map[new_master2_id];
         }
@@ -249,7 +248,7 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
         }
         membership_list_lock.unlock();
     }
-    
+
     if(node == cur_master1_id){     //If node failed is master1
         string msg;
         if(master2_info.vm_num != -1){  //If old master 2 still alive
@@ -265,7 +264,7 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
         else{
             msg = create_MU_msg(node, 99, new_master2_id);        //use 99 to indicate that old master2 failed
         }
-        
+
         //Tell VM_k to become master 2 && Send the whole file table to new master 2
         int new_master2_sock_fd = tcp_open_connection(new_master2_info.ip_addr_str, PORT_STABLILIZATION_MSG);
         if(new_master2_sock_fd != -1){                                  //Can make connection with new_master2
@@ -289,7 +288,7 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
         else{
             msg = create_MU_msg(node, 99, new_master2_id);        //use 99 to indicate that old master2 failed
         }
-        
+
         //Tell VM_k to become master 2 && Send the whole file table to new master 2
         int new_master2_sock_fd = tcp_open_connection(new_master2_info.ip_addr_str, PORT_STABLILIZATION_MSG);
         if(new_master2_sock_fd != -1){                                  //Can make connection with new_master2
@@ -300,14 +299,14 @@ void node_fail_handler_at_master(vm_id_t node, int cur_master_id, int cur_master
     }
     else{           //Both master1 and master2 are still alive. Send updated file table to both of them
         msg = create_MU_msg(node, cur_master1_id, cur_master1_id);
-        
+
         int master1_sock_fd = tcp_open_connection(master1_info.ip_addr_str, PORT_STABLILIZATION_MSG);
         if(master1_sock_fd != -1){                                      //Can make connection with new_master1
             int numbytes = tcp_send_string(master1_sock_fd, msg);        //Don't care if send successfully or not!
             if(numbytes == 0)
                 close(master1_sock_fd);
         }
-        
+
         int master2_sock_fd = tcp_open_connection(master2_info.ip_addr_str, PORT_STABLILIZATION_MSG);
         if(master2_sock_fd != -1){                                      //Can make connection with new_master2
             int numbytes = tcp_send_string(master2_sock_fd, msg);        //Don't care if send successfully or not!
@@ -340,16 +339,16 @@ void node_fail_handler_at_master1(vm_id_t node){
                     }
                 }
                 membership_list_lock.unlock();
-                
+
                 //Handle failure at last failed node
                 node_fail_handler_at_master(last_failed_node, my_vm_info.vm_num, new_master1_id, new_master2_id);
-                
+
                 //Hanlde failure at current failed node
                 node_fail_handler_at_master(node, my_vm_info.vm_num, new_master1_id, new_master2_id);
-                
+
                 //Already handle 2 failure. Reset last_failed_node
                 last_failed_node = -1;
-                
+
                 master1_id = new_master1_id;
                 master2_id = new_master2_id;
             }
@@ -366,14 +365,14 @@ void node_fail_handler_at_master1(vm_id_t node){
                     }
                 }
                 membership_list_lock.unlock();
-                
+
                 //Handle failure at last failed node
                 node_fail_handler_at_master(last_failed_node, my_vm_info.vm_num, master2_id, new_master2_id);
                 //Hanlde failure at current failed node
                 node_fail_handler_at_master(node, my_vm_info.vm_num, master2_id, new_master2_id);
                 //Already handle 2 failure. Reset last_failed_node
                 last_failed_node = -1;
-                
+
                 //master1 will become new master;
                 //master2 will beomce new master1
                 master1_id = master2_id;
@@ -393,22 +392,22 @@ void node_fail_handler_at_master1(vm_id_t node){
                 }
             }
             membership_list_lock.unlock();
-            
+
             //Hanlde failure at current failed node
             node_fail_handler_at_master(node, my_vm_info.vm_num, master1_id, new_master2_id);
             //Already handle failure. Reset last_failed_node
             last_failed_node = -1;
-            
+
             //master1 will become new master;
             //master2 will beomce new master1
             //Need to be in this order to prevent system from hanging
             master1_id = master2_id;
             master2_id = new_master2_id;
         }
-        
+
         //Update myself as master!
         master = my_vm_info.vm_num;
-        
+
         //Send out msg to say that I'm master
         string msg = create_M_msg(master);
         vector<string> ip_strings;
@@ -418,7 +417,7 @@ void node_fail_handler_at_master1(vm_id_t node){
                 ip_strings.push_back(vm_info_map[*it].ip_addr_str);
         }
         membership_list_lock.unlock();
-        
+
         //Send all msg to other VMs. Is there a better way to do this???? This seems too slow
         for(int i = 0; i < ip_strings.size(); i++){
             int temp_sock_fd = tcp_open_connection(ip_strings[i], PORT_STABLILIZATION_MSG);
@@ -456,24 +455,24 @@ void node_fail_handler_at_master2(vm_id_t node){
             }
         }
         membership_list_lock.unlock();
-        
+
         //Handle failure at last failed node
         node_fail_handler_at_master(last_failed_node, my_vm_info.vm_num, new_master1_id, new_master2_id);
-        
+
         //Hanlde failure at current failed node
         node_fail_handler_at_master(node, my_vm_info.vm_num, new_master1_id, new_master2_id);
-        
+
         //Already handle 2 failure. Reset last_failed_node
         last_failed_node = -1;
-        
+
         //Send out msg to say that I'm master
         //Update myself as master!
         master = my_vm_info.vm_num;
-        
+
         //Update master1 and master2
         master1_id = new_master1_id;
         master2_id = new_master1_id;
-        
+
         //Send out msg to say that I'm master
         string msg = create_M_msg(master);
         vector<string> ip_strings;
@@ -483,7 +482,7 @@ void node_fail_handler_at_master2(vm_id_t node){
                 ip_strings.push_back(vm_info_map[*it].ip_addr_str);
         }
         membership_list_lock.unlock();
-        
+
         //Send all msg to other VMs. Is there a better way to do this???? This seems too slow
         for(int i = 0; i < ip_strings.size(); i++){
             int temp_sock_fd = tcp_open_connection(ip_strings[i], PORT_STABLILIZATION_MSG);
@@ -573,7 +572,7 @@ void handle_FTR_msg(string msg){
     string file_name = msg.substr(3, file_name_length);
     int version = string_to_int(msg.substr(pch-msg.c_str()+1, 2));
     int M_x = string_to_int(msg.substr(pch-msg.c_str()+1 +2, 2));
-    
+
     membership_list_lock.lock();
     if(membership_list.find(M_x) != membership_list.end()){
         VM_info M_x_info = vm_info_map[M_x];
@@ -583,7 +582,7 @@ void handle_FTR_msg(string msg){
         membership_list_lock.unlock();
         return;
     }
-    
+
     check_and_write_file(file_name, M_x.ip_addr_str, PORT_STABLILIZATION_FILE, version);
     return;
 }
@@ -591,7 +590,7 @@ void handle_FTR_msg(string msg){
 void handle_MU_msg(string msg){
     file_table_lock.lock();
     vector<string> lines;
-    
+
     string delimiter = "\n";
     size_t pos = 0;
     std::string token;
@@ -601,28 +600,27 @@ void handle_MU_msg(string msg){
         lines.push_back(token);
         msg.erase(0, pos + delimiter.length());
     }
-    
+
     int new_master, new_master1 , new_master2, node_fail_id;
     node_fail_id = string_to_int(lines[0].substr(2, 2));
     new_master = string_to_int(lines[0].substr(4,2));
     new_master1 = string_to_int(lines[0].substr(6, 2));
     new_master2 = string_to_int(lines[0].substr(8, 2));
-    
+
     master_lock.lock();
     master = new_master;
-    master_lock.unlock();
-    
     master1_id = new_master1;
     master2_id = new_master2;
-    
-    
+    master_lock.unlock();
+
+
     //Need lock ??
     file_table.erase(file_table.begin(), file_table.end());
     next_version_map.lock();
     next_version_map.erase(next_version_map.begin(), next_version_map.end());
     replica_map.erase(replica_map.begin(), replica_map.end());
     filename_map.erase(filename_map.begin(), filename_map.end());
-    
+
     for(int i = 1; i < lines.size(); i++){
         char* pch = strchr(lines[i].c_str(), '?');
         int file_name_length = pch - msg.c_str();
@@ -630,28 +628,28 @@ void handle_MU_msg(string msg){
         int replica_id = string_to_int(msg.substr(file_name_length+1, 2));
         int version = string_to_int(msg.substr(file_name_length+1+2, 2));
         int next_version = string_to_int(msg.substr(file_name_length+1+2+2, 2));
-        
+
         file_row new_row;
         new_row.row = i;
         new_row.file_name = file_name;
         new_row.version = version;
         new_row.replica = replica_id;
-        
+
         file_table[i] = file_row;
         next_version_map[file_name] = next_version;
         replica_map[replica_id] = i;
         filename_map[file_name] = i;
     }
-    
+
     if(last_failed_node == node_fail_id){
         last_failed_node = -1;
     }
     if(waiting_to_handle_fail_id == node_fail_id){
         waiting_to_handle_fail_id = -1;
     }
-    
+
     next_version_map.unlock();
-    
+
     file_table_lock.unlock();
     return;
 }
@@ -661,12 +659,4 @@ void handle_M_msg(string msg){
     int new_master = string_to_int(msg.substr(1,2));
     master = new_master;
     master_lock.unlock();
-    
 }
-
-
-
-
-
-
-

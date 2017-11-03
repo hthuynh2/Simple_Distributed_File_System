@@ -1,22 +1,20 @@
-
-
 int tcp_open_connection(string dest_ip, int dest_port){
     int sockfd, numbytes;
     char buf[MAXDATASIZE];
     struct addrinfo hints, *servinfo, *p;
     int rv;
     char s[INET6_ADDRSTRLEN];
-    
-    
+
+
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    
+
     if ((rv = getaddrinfo(dest_ip, dest_port, &hints, &servinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         return -1;
     }
-    
+
     // loop through all the results and connect to the first we can
     for(p = servinfo; p != NULL; p = p->ai_next) {
         if ((sockfd = socket(p->ai_family, p->ai_socktype,
@@ -24,25 +22,25 @@ int tcp_open_connection(string dest_ip, int dest_port){
             perror("client: socket");
             continue;
         }
-        
+
         if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sockfd);
             perror("client: connect");
             continue;
         }
-        
+
         break;
     }
-    
+
     if (p == NULL) {
         fprintf(stderr, "client: failed to connect\n");
         return -1;
     }
-    
+
     inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
               s, sizeof s);
     printf("client: connecting to %s\n", s);
-    
+
     freeaddrinfo(servinfo); // all done with this structure
     return sockfd;
 }
@@ -71,7 +69,7 @@ int tcp_receive_short_msg(int sockfd, int node_id, char* buf){  //Receive msg le
     FD_ZERO(&r_fds);
     FD_SET(sockfd, node_id);
     int numbytes = 0;
-    
+
     while(1){
         r_fds = r_master;
         if(select(sockfd+1, &r_fds, NULL, NULL, NULL ) == -1){
@@ -85,7 +83,7 @@ int tcp_receive_short_msg(int sockfd, int node_id, char* buf){  //Receive msg le
             }
             return numbytes;
         }
-        
+
         membership_list_lock.lock();
         if(membership_list.find(node_id) == membership_list.end()){
             membership_list_lock.unlock();

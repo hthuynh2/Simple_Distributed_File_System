@@ -142,16 +142,6 @@ int last_failed_node = -1;
 mutex file_table_lock;
 mutex next_version_map_lock;
 
-
-
-
-int main(int argc, char ** argv) {
-	return 0;
-}
-
-
-
-
 ///////////////////
 
 /*This function update the HB targets based on the current membershiplist
@@ -163,24 +153,24 @@ void update_hb_targets(bool haveLock){
         membership_list_lock.lock();
         hb_targets_lock.lock();
     }
-    
+
     set<int> new_hb_targets;
     //Get new targets
-    
+
     auto my_it = membership_list.find(my_vm_info.vm_num);
     int count = 0;
-    
+
     //Get sucessors
     for(auto it = next(my_it); it != membership_list.end() && count < NUM_TARGETS/2; it++){
         new_hb_targets.insert(*it);
         count ++;
     }
-    
+
     for(auto it = membership_list.begin(); it != my_it && count < NUM_TARGETS/2; it++){
         new_hb_targets.insert(*it);
         count ++;
     }
-    
+
     //Get predecessors
     if(count == NUM_TARGETS/2){
         count = 0;
@@ -214,20 +204,20 @@ void update_hb_targets(bool haveLock){
             udp.send_msg(vm_info_map[*it].ip_addr_str, t_msg);
         }
     }
-    
+
     //Update targets
     hb_targets.erase(hb_targets.begin(), hb_targets.end());
     for(auto it = new_hb_targets.begin(); it != new_hb_targets.end(); it++){
         hb_targets.insert(*it);
     }
-    
+
     // Log Updates
     update_hbs_log << "New targets ";
     for(auto i : hb_targets) {
         update_hbs_log << i << " ";
     }
     update_hbs_log <<= "";
-    
+
     if(haveLock == false){
         hb_targets_lock.unlock();
         membership_list_lock.unlock();
@@ -337,17 +327,17 @@ void get_my_ip(){
     struct addrinfo hints, *res, *p;
     int status;
     char ipstr[INET6_ADDRSTRLEN];
-    
+
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;
     char my_addr[512];
     gethostname(my_addr,512);
-    
+
     if ((status = getaddrinfo(my_addr, NULL, &hints, &res)) != 0) {
         perror("Cannot get my addrinfo\n");
         exit(1);
     }
-    
+
     for(p = res;p != NULL; p = p->ai_next) {
         struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
         void * addr = &(ipv4->sin_addr);
@@ -356,7 +346,7 @@ void get_my_ip(){
         break;
     }
     freeaddrinfo(res); // free the linked list
-    
+
     //Get Bytes from ip address
     unsigned short a, b, c, d;
     sscanf(ipstr, "%hu.%hu.%hu.%hu", &a, &b, &c, &d);
@@ -364,7 +354,7 @@ void get_my_ip(){
     my_vm_info.ip_addr[1] = (unsigned char) b;
     my_vm_info.ip_addr[2] = (unsigned char) c;
     my_vm_info.ip_addr[3] = (unsigned char) d;
-    
+
     for (int i = 0 ; i < 4; i++) {
         my_vm_info.ip_addr_str.append(to_string((unsigned int) my_vm_info.ip_addr[i]));
         if(i != 3)
@@ -388,8 +378,8 @@ void init_machine(){
     if(strncmp(my_addr, vm_hosts[0].c_str(), vm_hosts[0].size()) == 0){
         is_VM0 = true;
     }
-    
-    
+
+
     ///Initialize my_socket_fd
     struct addrinfo hints, *servinfo, *p;
     int rv;
@@ -397,12 +387,12 @@ void init_machine(){
     hints.ai_family = AF_UNSPEC; // set to AF_INET to force IPv4
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE; // use my IP
-    
+
     if ((rv = getaddrinfo(my_addr,PORT, &hints, &servinfo)) != 0) {
         perror("getaddrinfo: failed \n");
         exit(1);
     }
-    
+
     // loop through all the results and make a socket
     for(p = servinfo; p != NULL; p = p->ai_next) {
         if ((my_socket_fd = socket(p->ai_family, p->ai_socktype,
@@ -418,15 +408,15 @@ void init_machine(){
         exit(1);
     }
     freeaddrinfo(servinfo);
-    
+
     //Initialize UDP listener
     my_listener = new UDP();
-    
+
     //Get time_stamp
     time_t seconds;
     seconds = time (NULL);
     my_vm_info.time_stamp = to_string(seconds);
-    
+
     //Get membership_list
     if(is_VM0 == false){
         get_membership_list(false);
@@ -436,7 +426,7 @@ void init_machine(){
         my_vm_info.make_id_str();
         my_vm_info.heartbeat = 0;
         get_membership_list(true);
-        
+
     }
 }
 
@@ -455,7 +445,7 @@ void msg_handler_thread(string msg){
         if(msg.size() != N_MESSAGE_LENGTH)
             return;
         local_protocol.handle_N_msg(msg, false);
-        
+
     }
     else if(msg[0] == 'L'){
         if(msg.size() != L_MESSAGE_LENGTH)
@@ -474,7 +464,7 @@ void msg_handler_thread(string msg){
     }
     else if(msg[0] == 'Q'){
         local_protocol.handle_Q_msg(msg, false);
-        
+
     }
     //    else if(msg[0] == 'R'){       //Only receive this once when startup. Did it in init_machine
     //        if((msg.size()-2)%12 != 0)
@@ -497,7 +487,7 @@ void listener_thread_handler(){
         }
         isJoin_lock.unlock();
         string msg = my_listener->read_msg_non_block(500);
-        
+
         if(msg.size() == 0){
             continue;
         }
@@ -518,19 +508,19 @@ void heartbeat_sender_handler(){
             isJoin_lock.unlock();
             return;
         }
-        
+
         isJoin_lock.unlock();
         UDP local_udp;
         membership_list_lock.lock();
         hb_targets_lock.lock();
-        
+
         //Send HB to all HB targets
         for(auto it = hb_targets.begin(); it != hb_targets.end(); it++){
             if(vm_info_map.find(*it) != vm_info_map.end()){
                 local_udp.send_msg(vm_info_map[*it].ip_addr_str, h_msg);
             }
         }
-        
+
         hb_targets_lock.unlock();
         membership_list_lock.unlock();
         //Sleep for HB_TIME
@@ -549,13 +539,13 @@ void heartbeat_checker_handler(){
             isJoin_lock.unlock();
             return;
         }
-        
+
         isJoin_lock.unlock();
         membership_list_lock.lock();
         hb_targets_lock.lock();
         time_t cur_time;
         cur_time = time (NULL);
-        
+
         for(auto it = hb_targets.begin(); it != hb_targets.end(); it++){
             std::unordered_map<int,VM_info>::iterator dead_vm_it;
             if((dead_vm_it = vm_info_map.find(*it)) != vm_info_map.end()){
@@ -566,7 +556,7 @@ void heartbeat_checker_handler(){
                     membership_list.erase(*it);
                     cout << "Failure Detected: VM id: " << dead_vm.vm_num << " --- ip: "<< dead_vm.ip_addr_str << " --- ts: "<<dead_vm.time_stamp
                     << " --- Last HB: " << dead_vm.heartbeat << "--- cur_time:  " << cur_time << "\n";
-                    
+
                     hb_checker_log << "Failure Detected: VM id: " << dead_vm.vm_num << " --- ip: "<< dead_vm.ip_addr_str << " --- ts: "<<dead_vm.time_stamp
                     << " --- Last HB: " << dead_vm.heartbeat << "--- cur_time:  " <<= cur_time;
                     print_membership_list();
@@ -583,9 +573,95 @@ void heartbeat_checker_handler(){
     }
 }
 
+
+
+
+
+void join_input_handler(){
+    isJoin_lock.lock();
+    //If user want to join the system
+    if(isJoin == true){
+        cout << "VM is running!!!\n";
+        isJoin_lock.unlock();
+        continue;
+    }
+    isJoin = true;
+    isJoin_lock.unlock();
+
+    //Initialize the VM
+    init_machine();
+    cout <<"-----------Successfully Initialize-----------\n";
+    cout << "My VM info: id: " << my_vm_info.vm_num << " --- ip: "<< my_vm_info.ip_addr_str << " --- ts: "<<my_vm_info.time_stamp<<"\n";
+    print_membership_list();
+    //Start all threads
+    listener_thread = std::thread(listener_thread_handler);
+    heartbeat_sender_thread = std::thread(heartbeat_sender_handler);
+    heartbeat_checker_thread = std::thread(heartbeat_checker_handler);
+}
+
+
+void quit_input_handler(){
+    isJoin_lock.lock();
+    if(isJoin == false){
+        cout << "VM is NOT running!!!\n";
+        isJoin_lock.unlock();
+        continue;
+    }
+    //Set flag to false to stop all threads
+    isJoin = false;
+    cout <<"Quitting the Program..\n";
+    isJoin_lock.unlock();
+
+    Protocol p;
+    UDP udp;
+    membership_list_lock.lock();
+    hb_targets_lock.lock();
+
+    //Send msg to notify other VM before quitting
+    string t_msg = p.create_T_msg();
+    for(auto it = hb_targets.begin(); it != hb_targets.end(); it++){
+        udp.send_msg(vm_info_map[*it].ip_addr_str, t_msg);
+    }
+    p.gossip_msg(p.create_Q_msg(), true);
+    hb_targets_lock.unlock();
+    membership_list_lock.unlock();
+    break;
+}
+
+
+
+void ml_input_handler(){
+    isJoin_lock.lock();
+    if(isJoin == false){
+        cout << "VM is NOT running!!!\n";
+        isJoin_lock.unlock();
+        continue;
+    }
+
+    isJoin_lock.unlock();
+    membership_list_lock.lock();
+    print_membership_list();
+    membership_list_lock.unlock();
+}
+
+
+void myVM_input_handler(){
+    isJoin_lock.lock();
+    if(isJoin == false){
+        cout << "VM is NOT running!!!\n";
+        isJoin_lock.unlock();
+        continue;
+    }
+
+    cout << "My VM info: id: " << my_vm_info.vm_num << " --- ip: "<< my_vm_info.ip_addr_str << " --- ts: "<<my_vm_info.time_stamp<<"\n";
+    isJoin_lock.unlock();
+}
+
+
+
+
 int main(){
     isJoin = false;
-    
     std::thread listener_thread;
     std::thread heartbeat_sender_thread;
     std::thread heartbeat_checker_thread;
@@ -594,111 +670,104 @@ int main(){
     cout << "Type ML to print membership list\n";
     cout << "Type MyVM to print this VM's information\n";
     cout << "-----------------------------\n";
-    
+
     //Main while Loop
     while(1){
         string input;
-        cin >> input;
+        getline(cin, input);
         if(strncmp(input.c_str(), "JOIN", 4) == 0){ //Join the system
-            isJoin_lock.lock();
-            //If user want to join the system
-            if(isJoin == true){
-                cout << "VM is running!!!\n";
-                isJoin_lock.unlock();
-                continue;
-            }
-            isJoin = true;
-            isJoin_lock.unlock();
-            
-            //Initialize the VM
-            init_machine();
-            cout <<"-----------Successfully Initialize-----------\n";
-            cout << "My VM info: id: " << my_vm_info.vm_num << " --- ip: "<< my_vm_info.ip_addr_str << " --- ts: "<<my_vm_info.time_stamp<<"\n";
-            print_membership_list();
-            //Start all threads
-            listener_thread = std::thread(listener_thread_handler);
-            heartbeat_sender_thread = std::thread(heartbeat_sender_handler);
-            heartbeat_checker_thread = std::thread(heartbeat_checker_handler);
+            join_input_handler();
         }
         else if(strncmp(input.c_str(), "QUIT", 4) == 0){    //Quit program
-            isJoin_lock.lock();
-            if(isJoin == false){
-                cout << "VM is NOT running!!!\n";
-                isJoin_lock.unlock();
-                continue;
-            }
-            //Set flag to false to stop all threads
-            isJoin = false;
-            
-            cout <<"Quitting the Program..\n";
-            isJoin_lock.unlock();
-            
-            Protocol p;
-            UDP udp;
-            membership_list_lock.lock();
-            hb_targets_lock.lock();
-            
-            //Send msg to notify other VM before quitting
-            string t_msg = p.create_T_msg();
-            for(auto it = hb_targets.begin(); it != hb_targets.end(); it++){
-                udp.send_msg(vm_info_map[*it].ip_addr_str, t_msg);
-            }
-            p.gossip_msg(p.create_Q_msg(), true);
-            hb_targets_lock.unlock();
-            membership_list_lock.unlock();
-            break;
+            quit_input_handler();
         }
         else if(strncmp(input.c_str(), "ML", 2) == 0){            //Print membershiplist
-            isJoin_lock.lock();
-            if(isJoin == false){
-                cout << "VM is NOT running!!!\n";
-                isJoin_lock.unlock();
-                continue;
-            }
-            
-            isJoin_lock.unlock();
-            membership_list_lock.lock();
-            print_membership_list();
-            membership_list_lock.unlock();
+            ml_input_handler();
         }
         else if(strncmp(input.c_str(), "MyVM", 4) == 0){            //Print VM info
+            myVM_input_handler();
+        }
+        else{
             isJoin_lock.lock();
             if(isJoin == false){
-                cout << "VM is NOT running!!!\n";
-                isJoin_lock.unlock();
+                cout << "Please JOIN before execute any command....\n";
                 continue;
             }
-            
-            cout << "My VM info: id: " << my_vm_info.vm_num << " --- ip: "<< my_vm_info.ip_addr_str << " --- ts: "<<my_vm_info.time_stamp<<"\n";
             isJoin_lock.unlock();
+            istringstream iss(input);
+            string word;
+            std::vector<string> args;
+            while(iss >> word) {
+                args.push_back(word);
+            }
+            if(args.empty()){
+                cout << "Undefined command. Please try again.\n";
+                continue;
+            }
+            if(strncmp(args[0].c_str(), "put", 3) == 0){
+                if(args.size() != 3){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                string local_file_name = args[1];
+                string sdfs_file_name = args[2];
+                if(local_file_name.size() == 0 || sdfs_file_name.size() == 0){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                write_at_client(args[1], args[2]);
+            }
+            else if(strncmp(args[0].c_str(), "get", 3) == 0){
+                if(args.size() != 3){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                string local_file_name = args[1];
+                string sdfs_file_name = args[2];
+                if(local_file_name.size() == 0 || sdfs_file_name.size() == 0){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                read_at_client(args[1], args[2]);
+            }
+            else if(strncmp(args[0].c_str(), "delete", 3) == 0){
+                if(args.size() != 2){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                string target_file = args[1];
+                if(target_file.size() == 0){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                delete_at_client(target_file);
+            }
+            else if(strncmp(args[0].c_str(), "ls", 3) == 0){
+                if(args.size() != 2){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                string target_file = args[1];
+                if(target_file.size() == 0){
+                    cout << "Undefined command. Please try again.\n";
+                    continue;
+                }
+                ls_at_client(target_file);
+            }
+            else if(strncmp(args[0].c_str(), "store", 3) == 0){
+                cout << "NEED TO IMPLEMENT\n"
+            }
         }
     }
-    
+
     cout << "Quit Successfully\n";
-    
+
     //Wait for all other threads to stop
     listener_thread.join();
     heartbeat_sender_thread.join();
     heartbeat_checker_thread.join();
-    
+
     my_logger.write_to_file("vm_log");
-    
-    
+
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
