@@ -658,8 +658,6 @@ void myVM_input_handler(){
 }
 
 
-
-
 int main(){
     isJoin = false;
     std::thread listener_thread;
